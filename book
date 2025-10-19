@@ -1,0 +1,112 @@
+from __future__ import annotations
+import logging
+import os
+import json
+from datetime import datetime, timezone, timedelta
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+import gspread
+from google.oauth2.service_account import Credentials
+
+# ==================== БЕЗОПАСНОЕ ПОЛУЧЕНИЕ КОНФИГОВ ====================
+def get_google_credentials():
+    """Безопасное получение Google Credentials"""
+    # Способ 1: Из переменной окружения (для продакшена)
+    GOOGLE_CREDENTIALS_JSON = os.environ.get('GOOGLE_CREDENTIALS')
+    if GOOGLE_CREDENTIALS_JSON:
+        logging.info("Using credentials from environment variable")
+        credentials_info = json.loads(GOOGLE_CREDENTIALS_JSON)
+        return Credentials.from_service_account_info(credentials_info)
+    
+    # Способ 2: Из файла (только для локальной разработки)
+    SERVICE_ACCOUNT_FILE = "angelic-tracer-465313-t9-27151af1e09d.json"
+    if os.path.exists(SERVICE_ACCOUNT_FILE):
+        logging.info("Using credentials from local file")
+        return Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE)
+    
+    raise Exception("Google credentials not found!")
+
+# Инициализация
+BOT_TOKEN = os.environ.get('BOT_TOKEN', '8419017530:AAE5L-60pcl0xq77JMsHCczy_jC5ctP7Ta8')
+SPREADSHEET_ID = os.environ.get('SPREADSHEET_ID', '10nzYJJ0d8GU23hwWf_rzu6_GjgIFqegeJS_oMmVSm6o')
+creds = get_google_credentials()
+
+# ==================== ОСТАЛЬНОЙ КОД БЕЗ ИЗМЕНЕНИЙ ====================
+BUTTON_CONSULT = "Запросить консультацию"
+BUTTON_BOOK = "Заказать книгу с автографом"
+BUTTON_QUESTION = "Другой вопрос"
+CONTACT_TELEGRAM = "Telegram"
+CONTACT_WHATSAPP = "WhatsApp"
+YES = "Да"
+NO = "Нет"
+DELIVERY_CDEK = "СДЭК"
+DELIVERY_YANDEX = "Яндекс.Маркет"
+CDEK_URL = "https://www.cdek.ru"
+YANDEX_MARKET_URL = "https://market.yandex.ru"
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+logger = logging.getLogger(__name__)
+
+def get_moscow_time():
+    moscow_tz = timezone(timedelta(hours=3))
+    return datetime.now(moscow_tz).strftime("%Y-%m-%d %H:%M:%S")
+
+def client_type_keyboard():
+    return ReplyKeyboardMarkup([[BUTTON_CONSULT], [BUTTON_BOOK], [BUTTON_QUESTION]], resize_keyboard=True, one_time_keyboard=True)
+
+CONTACT_KEYBOARD = ReplyKeyboardMarkup([[CONTACT_TELEGRAM, CONTACT_WHATSAPP]], resize_keyboard=True, one_time_keyboard=True)
+YES_NO_KEYBOARD = ReplyKeyboardMarkup([[YES, NO]], resize_keyboard=True, one_time_keyboard=True)
+DELIVERY_KEYBOARD = ReplyKeyboardMarkup([[DELIVERY_CDEK], [DELIVERY_YANDEX]], resize_keyboard=True, one_time_keyboard=True)
+
+def append_consultation_row(row: list):
+    try:
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        worksheet = sh.get_worksheet(0)
+        worksheet.append_row(row, value_input_option="USER_ENTERED")
+        logger.info("Консультация записана в таблицу")
+    except Exception as e:
+        logger.error(f"Ошибка записи консультации: {e}")
+        raise
+
+def append_book_row(row: list):
+    try:
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        worksheet = sh.get_worksheet(1)
+        worksheet.append_row(row, value_input_option="USER_ENTERED")
+        logger.info("Заказ книги записан в таблицу")
+    except Exception as e:
+        logger.error(f"Ошибка записи заказа книги: {e}")
+        raise
+
+def append_question_row(row: list):
+    try:
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        worksheet = sh.get_worksheet(2)
+        worksheet.append_row(row, value_input_option="USER_ENTERED")
+        logger.info("Вопрос записан в таблицу")
+    except Exception as e:
+        logger.error(f"Ошибка записи вопроса: {e}")
+        raise
+
+# ... все обработчики остаются без изменений ...
+
+def main():
+    logger.info("Starting bot...")
+    app = Application.builder().token(BOT_TOKEN).build()
+    
+    app.add_handler(MessageHandler(filters.Regex(f"^({BUTTON_CONSULT}|{BUTTON_BOOK}|{BUTTON_QUESTION})$"), handle_client_type_selection))
+    app.add_handler(MessageHandler(filters.Regex(f"^({CONTACT_TELEGRAM}|{CONTACT_WHATSAPP})$"), handle_contact_selection))
+    app.add_handler(MessageHandler(filters.Regex(f"^({YES}|{NO})$"), handle_yes_no_selection))
+    app.add_handler(MessageHandler(filters.Regex(f"^({DELIVERY_CDEK}|{DELIVERY_YANDEX})$"), handle_delivery_selection))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unknown_message))
+
+    logger.info("Bot is running...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
